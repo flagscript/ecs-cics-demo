@@ -5,6 +5,14 @@ Description: CiCd Pipeline for ECR/ECS
 Resources:
 
   #
+  # S3
+  # 
+  EcrDemoCodePipelineArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: ecs-demo-codepipeline-artifact-bucket-gk-deckers  
+
+  #
   # ECR
   #
 
@@ -45,17 +53,17 @@ Resources:
               - logs:PutLogEvents
             Effect: Allow
             Resource: !Sub arn:aws:logs:*:${AWS::AccountId}:*
-          #- Action: 
-          #    - s3:*
-          #  Effect: Allow
-          #  Resource:
-          #    - !Sub arn:aws:s3:::${EcrDemoS3Bucket}
-          #    - !Sub arn:aws:s3:::${EcrDemoS3Bucket}/*
+          - Action: 
+              - s3:*
+            Effect: Allow
+            Resource:
+              - !GetAtt EcrDemoCodePipelineArtifactStore.Arn
+              - !Join [ '', [ !GetAtt EcrDemoCodePipelineArtifactStore.Arn, '/*' ] ]
           - Action:
               - ecr:*
             Effect: Allow
-            Resource:
-              - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrDemoRepository}
+            Resource: '*'
+              #- !GetAtt EcrDemoRepository.Arn
       Roles:
         - !Ref EcrDemoCodeBuildRole         
 
@@ -65,7 +73,6 @@ Resources:
       Artifacts:
         ArtifactIdentifier: docker-build
         Type: CODEPIPELINE
-      BadgeEnabled: true
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/standard:4.0
@@ -83,9 +90,8 @@ Resources:
       Name: ecs-demo-codebuild-project
       ServiceRole: !Ref EcrDemoCodeBuildRole
       Source:
-        Location: https://github.com/flagscript/ecs-cics-demo.git
-        ReportBuildStatus: true
-        Type: GITHUB
+        BuildSpec: buildspec.yml
+        Type: CODEPIPELINE
       TimeoutInMinutes: 10
 
   #
@@ -95,13 +101,8 @@ Resources:
   EcrDemoCodeStarConnection:
     Type: AWS::CodeStarConnections::Connection
     Properties:
-      ConnectionName: ecr-demo-flagscript-github-connection
+      ConnectionName: ecr-demo-flagscript-github
       ProviderType: GitHub
-
-  EcrDemoCodePipelineArtifactStore:
-    Type: AWS::S3::Bucket
-    Properties: 
-      BucketName: ecs-demo-codepipeline-artifact-bucket-gk-deckers
 
   EcrDemoCodePipelineRole:
     Type: AWS::IAM::Role
@@ -126,6 +127,11 @@ Resources:
         Version: 2012-10-17
         Statement:
           - Action:
+              - codestar-connections:UseConnection
+            Effect: Allow
+            Resource: 
+              - !GetAtt EcrDemoCodeStarConnection.ConnectionArn
+          - Action:
               - codebuild:*
             Effect: Allow
             Resource: !GetAtt EcrDemoCodeBuildProject.Arn
@@ -135,11 +141,16 @@ Resources:
             Effect: Allow
             Resource: '*'
           - Action:
+              - ecr:*
+            Effect: Allow
+            Resource:
+              - !GetAtt EcrDemoRepository.Arn            
+          - Action:
               - s3:*
             Effect: Allow
             Resource:
-              - !Ref EcrDemoCodePipelineArtifactStore
-              - !Join [ '', [ !Ref EcrDemoCodePipelineArtifactStore, '/*' ] ]
+              - !GetAtt EcrDemoCodePipelineArtifactStore.Arn
+              - !Join [ '', [ !GetAtt EcrDemoCodePipelineArtifactStore.Arn, '/*' ] ]
       Roles:
         - !Ref EcrDemoCodePipelineRole
 
@@ -149,7 +160,8 @@ Resources:
       ArtifactStore: 
         Location: !Ref EcrDemoCodePipelineArtifactStore
         Type: S3
-      RoleArn: !Ref EcrDemoCodePipelineRole.Arn
+      Name: ecr-demo-codepipeline
+      RoleArn: !GetAtt EcrDemoCodePipelineRole.Arn
       Stages: 
 
         - Name: Source
@@ -164,7 +176,6 @@ Resources:
                 FullRepositoryId: flagscript/ecs-cics-demo
                 BranchName: master
                 OutputArtifactFormat: CODE_ZIP
-              InputArtifacts: []
               OutputArtifacts:
                 - Name: SourceArtifact
               RunOrder: 1
@@ -175,17 +186,14 @@ Resources:
             - ActionTypeId:
                 Category: Build
                 Owner: AWS
-                Provider: AWS
+                Provider: CodeBuild
                 Version: '1'
               Configuration: 
                 ProjectName: !Ref EcrDemoCodeBuildProject
                 PrimarySource: SourceArtifact
-                #EnvironmentVariables: '*'
               InputArtifacts: 
                 - Name: SourceArtifact
               Name: BuildDockerPublishEcr
               OutputArtifacts: 
                 - Name: BuildArtifact
               RunOrder: 1
-
-      #EnvironmentVariables: '[{"name":"TEST_VARIABLE","value":"TEST_VALUE","type":"PLAINTEXT"},{"name":"ParamStoreTest","value":"PARAMETER_NAME","type":"PARAMETER_STORE"}]'
