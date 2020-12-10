@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Fargate Setup for ECS CI CD Demo
+
+#Parameters:
+#
+#  SubnetId:
+#    Type: String
+
+Resources:
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: ecs-demo-log-group
+      RetentionInDays: 1
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: ecs-demo-cluster
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      RoleName: ecs-demo-execution-role
+
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for NGINX Container
+      GroupName: ecs-demo-security-group
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80

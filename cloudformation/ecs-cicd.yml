@@ -197,3 +197,20 @@ Resources:
               OutputArtifacts: 
                 - Name: BuildArtifact
               RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND
+                StackName: ecs-cicd-demo-cluster
+                TemplatePath: DeploymentArtifacts::cloudformation/setup-fargate.yml                
+              InputArtifacts: 
+                - Name: SourceArtifact
+              Name: CreateFargate
+              RunOrder: 1        
