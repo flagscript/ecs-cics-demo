@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: CiCd Pipeline for ECR/ECS
+
+Resources:
+
+  #
+  # ECR
+  #
+
+  EcrDemoRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ecs-demo-repo
+
+  #
+  # Code Build
+  #
+
+  EcrDemoCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ecs-demo-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+      Path: /  
+      
+  EcrDemoCodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ecs-demo-codebuild-policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: 
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Effect: Allow
+            Resource: !Sub arn:aws:logs:*:${AWS::AccountId}:*
+          #- Action: 
+          #    - s3:*
+          #  Effect: Allow
+          #  Resource:
+          #    - !Sub arn:aws:s3:::${EcrDemoS3Bucket}
+          #    - !Sub arn:aws:s3:::${EcrDemoS3Bucket}/*
+          - Action:
+              - ecr:*
+            Effect: Allow
+            Resource:
+              - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrDemoRepository}
+      Roles:
+        - !Ref EcrDemoCodeBuildRole         
+
+  EcrDemoCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        ArtifactIdentifier: docker-build
+        Type: CODEPIPELINE
+      BadgeEnabled: true
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:4.0
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref 'AWS::AccountId'
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref 'AWS::Region'
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref EcrDemoRepository
+          - Name: IMAGE_TAG
+            Value: latest
+      Name: ecs-demo-codebuild-project
+      ServiceRole: !Ref EcrDemoCodeBuildRole
+      Source:
+        Location: https://github.com/flagscript/ecs-cics-demo.git
+        ReportBuildStatus: true
+        Type: GITHUB
+      TimeoutInMinutes: 10
+
+  #
+  # CodePipeline
+  # 
+
+  EcrDemoCodeStarConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: ecr-demo-flagscript-github-connection
+      ProviderType: GitHub
+
+  EcrDemoCodePipelineArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: ecs-demo-codepipeline-artifact-bucket-gk-deckers
+
+  EcrDemoCodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ecs-demo-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      Path: /  
+
+  EcrDemoCodePipelinePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ecs-demo-codepipeline-policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - codebuild:*
+            Effect: Allow
+            Resource: !GetAtt EcrDemoCodeBuildProject.Arn
+          - Action:
+              - cloudformation:*
+              - iam:ListRoles
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - s3:*
+            Effect: Allow
+            Resource:
+              - !Ref EcrDemoCodePipelineArtifactStore
+              - !Join [ '', [ !Ref EcrDemoCodePipelineArtifactStore, '/*' ] ]
+      Roles:
+        - !Ref EcrDemoCodePipelineRole
+
+  EcrDemoCodePipeline:
+    Type: AWS::CodePipeline::Pipeline 
+    Properties:
+      ArtifactStore: 
+        Location: !Ref EcrDemoCodePipelineArtifactStore
+        Type: S3
+      RoleArn: !Ref EcrDemoCodePipelineRole.Arn
+      Stages: 
+
+        - Name: Source
+          Actions:
+            - ActionTypeId:
+                Version: '1'
+                Owner: AWS
+                Category: Source
+                Provider: CodeStarSourceConnection
+              Configuration:
+                ConnectionArn: !GetAtt EcrDemoCodeStarConnection.ConnectionArn
+                FullRepositoryId: flagscript/ecs-cics-demo
+                BranchName: master
+                OutputArtifactFormat: CODE_ZIP
+              InputArtifacts: []
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+              Name: GitHubSourceCode
+
+        - Name: Build
+          Actions:
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: AWS
+                Version: '1'
+              Configuration: 
+                ProjectName: !Ref EcrDemoCodeBuildProject
+                PrimarySource: SourceArtifact
+                #EnvironmentVariables: '*'
+              InputArtifacts: 
+                - Name: SourceArtifact
+              Name: BuildDockerPublishEcr
+              OutputArtifacts: 
+                - Name: BuildArtifact
+              RunOrder: 1
+
+      #EnvironmentVariables: '[{"name":"TEST_VARIABLE","value":"TEST_VALUE","type":"PLAINTEXT"},{"name":"ParamStoreTest","value":"PARAMETER_NAME","type":"PARAMETER_STORE"}]'
